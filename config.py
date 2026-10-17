@@ -19,17 +19,22 @@ class Config:
                 names = set()
                 try:
                     tasks = self.config["tasks"]
+
+                    if len(tasks) < 1:
+                        print("Empty task list")
+                        return False
+
                     for task in tasks:
-                        if task["name"] in names:
-                            print("Duplicate name: ", task["name"])
-                            names.add(task["name"])
-                            return False
-                        elif isinstance(task["name"].strip(), str):
+                        if task["name"].strip() == "" and isinstance(task["name"], str):
                             print("Empty name found in tasks")
-                            names.add(task["name"])
                             return False
                         else:
-                            names.add(task["name"])
+                            if task["name"] in names:
+                                print("Duplicate name: ", task["name"])
+                                names.add(task["name"])
+                                return False
+                            else:
+                                names.add(task["name"])
                     print(names)
                     return True
                 except Exception as e:
