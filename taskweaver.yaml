@@ -1,22 +1,22 @@
 project:
   name: TaskWeaver
-  version: 1.0.0
+  version: "1.0.0"
 
 settings:
-  enabled:
   max_retries: 3
-  timeout:
+  timeout: 300
 
 tasks:
   - name: lint
-    command:
-    retries: 3
+    command: "ruff check ."
 
   - name: test
-    command:
-    retries: 3
+    command: "pytest"
+    retries: 0
 
   - name: build
-    command:
-    retries: 3
-    dependencies: [lint, test]
+    command: "python -m build"
+    dependencies:
+      - lint
+      - test
+    timeout: 600
