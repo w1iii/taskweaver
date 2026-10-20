@@ -42,6 +42,10 @@ class Config:
             print(f"Invalid timeout: {settings['timeout']!r}")
             return False
 
+        if "max_concurrent" in settings and not self._is_positive(settings["max_concurrent"]):
+            print(f"Invalid max_concurrent: {settings['max_concurrent']!r}")
+            return False
+
         return True
 
     def apply_defaults(self, tasks=None):
@@ -134,6 +138,10 @@ class Config:
 
             if "timeout" in task and not self._is_positive(task["timeout"]):
                 print(f"Invalid timeout for task '{name}': {task['timeout']!r}")
+                return False
+
+            if "max_parallel" in task and not self._is_positive(task["max_parallel"]):
+                print(f"Invalid max_parallel for task '{name}': {task['max_parallel']!r}")
                 return False
 
             if "enabled" in task and not isinstance(task["enabled"], bool):

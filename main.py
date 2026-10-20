@@ -4,6 +4,7 @@ import typer
 
 from config import Config
 from dependencies import DependencyManager
+from parallel_runner import ParallelRunner
 from runner import TaskRunner, print_results
 
 app = typer.Typer(
@@ -85,7 +86,11 @@ def main_callback(
 
 def _run_all(config_path: str) -> None:
     config = _load_config(config_path)
-    results = TaskRunner(config.config["tasks"]).run_all()
+    tasks = config.config["tasks"]
+    max_concurrent = config.config.get("settings", {}).get("max_concurrent")
+    runner = ParallelRunner(tasks, max_concurrent)
+    import asyncio
+    results = asyncio.run(runner.run_all())
     print_results(results)
     failed = [r for r in results if not r.ok]
     typer.echo(f"\n{len(results) - len(failed)}/{len(results)} tasks succeeded")
@@ -95,7 +100,10 @@ def _run_all(config_path: str) -> None:
 def _run_single(config_path: str, task_name: str) -> None:
     config = _load_config(config_path)
     subset = _collect_with_deps(config.config["tasks"], task_name)
-    results = TaskRunner(subset).run_all()
+    max_concurrent = config.config.get("settings", {}).get("max_concurrent")
+    runner = ParallelRunner(subset, max_concurrent)
+    import asyncio
+    results = asyncio.run(runner.run_all())
     print_results(results)
     failed = [r for r in results if not r.ok]
     typer.echo(f"\n{len(results) - len(failed)}/{len(results)} tasks succeeded")

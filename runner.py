@@ -23,6 +23,7 @@ class TaskResult:
     stdout: str = ""
     stderr: str = ""
     error: str | None = None
+    instance: int = 0
 
     @property
     def ok(self):
