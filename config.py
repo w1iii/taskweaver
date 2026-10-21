@@ -152,7 +152,6 @@ class Config:
 
         self.apply_defaults(tasks)
 
-        print(f"Validated task names: {names}")
         return True
 
     def check_config(self):

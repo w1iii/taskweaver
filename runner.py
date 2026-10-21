@@ -121,7 +121,7 @@ class TaskRunner:
 
 def print_results(results: list[TaskResult]) -> None:
     for result in results:
-        line = f"[{result.status:>7}] {result.name}"
+        line = f"[{result.status}] {result.name}"
 
         if result.attempts > 1:
             line += f" (attempts: {result.attempts})"

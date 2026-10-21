@@ -37,17 +37,19 @@ class ParallelRunner:
         for t in tasks:
             for d in t.get("dependencies", []):
                 self.dependents[d].append(t["name"])
+        self.failed_deps: dict[str, list[str]] = defaultdict(list)
+        self._print_lock = asyncio.Lock()
 
     async def run_all(self) -> list[TaskResult]:
         DependencyManager(self.tasks).validate_dependencies()
 
         ready: asyncio.PriorityQueue = asyncio.PriorityQueue()
-        in_degree = {
+        pending = {
             name: len(self.tasks_by_name[name].get("dependencies", []))
             for name in self.tasks_by_name
         }
 
-        for name, deg in in_degree.items():
+        for name, deg in pending.items():
             if deg == 0:
                 await ready.put((self.depths[name], name))
 
@@ -78,7 +80,7 @@ class ParallelRunner:
             for t in finished:
                 name = running.pop(t)
                 instances = t.result()
-                self._record(name, instances, in_degree, ready)
+                self._record(name, instances, pending, ready)
 
         return self.results
 
@@ -86,7 +88,7 @@ class ParallelRunner:
         self,
         name: str,
         instances: list[TaskResult],
-        in_degree: dict[str, int],
+        pending: dict[str, int],
         ready: asyncio.PriorityQueue,
     ):
         any_failed = any(not r.ok for r in instances)
@@ -98,13 +100,22 @@ class ParallelRunner:
             if dep_name in self.task_status:
                 continue
             if status == FAILED:
-                self._block(dep_name, [name])
-            else:
-                in_degree[dep_name] -= 1
-                if in_degree[dep_name] == 0:
+                self.failed_deps[dep_name].append(name)
+            pending[dep_name] -= 1
+            if pending[dep_name] == 0:
+                failed = self.failed_deps.get(dep_name)
+                if failed:
+                    self._block(dep_name, failed, pending, ready)
+                else:
                     ready.put_nowait((self.depths[dep_name], dep_name))
 
-    def _block(self, name: str, failed_deps: list[str]):
+    def _block(
+        self,
+        name: str,
+        failed_deps: list[str],
+        pending: dict[str, int],
+        ready: asyncio.PriorityQueue,
+    ):
         if name in self.task_status:
             return
         self.task_status[name] = BLOCKED
@@ -116,7 +127,12 @@ class ParallelRunner:
             )
         )
         for child in self.dependents[name]:
-            self._block(child, [name])
+            if child in self.task_status:
+                continue
+            self.failed_deps[child].append(name)
+            pending[child] -= 1
+            if pending[child] == 0:
+                self._block(child, self.failed_deps[child], pending, ready)
 
     async def _run_task(
         self, name: str, global_sem: asyncio.Semaphore
@@ -156,6 +172,7 @@ class ParallelRunner:
 
             stdout_lines: list[str] = []
             stderr_lines: list[str] = []
+            lock = self._print_lock
 
             async def stream(reader, sink):
                 while True:
@@ -164,7 +181,8 @@ class ParallelRunner:
                         break
                     text = line.decode(errors="replace").rstrip()
                     sink.append(text)
-                    print(f"[{name}] {text}")
+                    async with lock:
+                        print(f"[{name}] {text}")
 
             try:
                 await asyncio.wait_for(
@@ -193,6 +211,9 @@ class ParallelRunner:
                 result.error = None
                 return result
             result.error = f"Exited with code {returncode}"
+            if returncode == 127:
+                # command not found — retrying yields identical failure
+                return result
 
         return result
 
