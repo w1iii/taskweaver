@@ -46,6 +46,16 @@ class Config:
             print(f"Invalid max_concurrent: {settings['max_concurrent']!r}")
             return False
 
+        if "cache" in settings and not isinstance(settings["cache"], bool):
+            print(f"Invalid cache: {settings['cache']!r}")
+            return False
+
+        if "cache_path" in settings:
+            cache_path = settings["cache_path"]
+            if not isinstance(cache_path, str) or not cache_path.strip():
+                print(f"Invalid cache_path: {cache_path!r}")
+                return False
+
         return True
 
     def apply_defaults(self, tasks=None):

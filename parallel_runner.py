@@ -3,8 +3,9 @@ import os
 import signal
 from collections import defaultdict
 
+from cache import Cache, compute_fingerprint
 from dependencies import DependencyManager
-from runner import BLOCKED, FAILED, SUCCESS, TaskResult
+from runner import BLOCKED, FAILED, SKIPPED, SUCCESS, TaskResult
 
 
 def compute_depths(tasks: list[dict]) -> dict[str, int]:
@@ -26,10 +27,16 @@ def compute_depths(tasks: list[dict]) -> dict[str, int]:
 
 
 class ParallelRunner:
-    def __init__(self, tasks: list[dict], max_concurrent: int | None = None):
+    def __init__(
+        self,
+        tasks: list[dict],
+        max_concurrent: int | None = None,
+        cache: Cache | None = None,
+    ):
         self.tasks = tasks
         self.tasks_by_name = {t["name"]: t for t in tasks}
         self.max_concurrent = max_concurrent or os.cpu_count() or 4
+        self.cache = cache
         self.depths = compute_depths(tasks)
         self.results: list[TaskResult] = []
         self.task_status: dict[str, str] = {}
@@ -138,17 +145,32 @@ class ParallelRunner:
         self, name: str, global_sem: asyncio.Semaphore
     ) -> list[TaskResult]:
         task = self.tasks_by_name[name]
+
+        if not task.get("enabled", True):
+            return [TaskResult(name=name, status=SKIPPED)]
+
+        fingerprint: str | None = None
+        if self.cache is not None:
+            fingerprint = compute_fingerprint(task)
+            cached = self.cache.get(fingerprint)
+            if cached is not None:
+                return [cached]
+
         max_parallel = task.get("max_parallel", 1)
         per_task_sem = asyncio.Semaphore(max_parallel)
 
         async def run_instance(instance_id: int) -> TaskResult:
-            async with global_sem:
-                async with per_task_sem:
-                    return await self._execute(task, instance_id)
+            async with global_sem, per_task_sem:
+                return await self._execute(task, instance_id)
 
-        return await asyncio.gather(
+        instances = await asyncio.gather(
             *(run_instance(i) for i in range(max_parallel))
         )
+
+        if self.cache is not None and fingerprint is not None and all(r.ok for r in instances):
+            self.cache.store(fingerprint, task, instances[0])
+
+        return instances
 
     async def _execute(self, task: dict, instance: int) -> TaskResult:
         name = task["name"]
@@ -223,7 +245,7 @@ class ParallelRunner:
 
 
 def run_workflow_parallel(
-    tasks: list[dict], max_concurrent: int | None = None
+    tasks: list[dict], max_concurrent: int | None = None, cache: Cache | None = None
 ) -> list[TaskResult]:
-    runner = ParallelRunner(tasks, max_concurrent)
+    runner = ParallelRunner(tasks, max_concurrent, cache)
     return asyncio.run(runner.run_all())

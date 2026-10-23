@@ -10,8 +10,9 @@ SUCCESS = "success"
 FAILED = "failed"
 BLOCKED = "blocked"
 SKIPPED = "skipped"
+CACHED = "cached"
 
-SUCCEEDED_STATUSES = (SUCCESS, SKIPPED)
+SUCCEEDED_STATUSES = (SUCCESS, SKIPPED, CACHED)
 
 
 @dataclass
