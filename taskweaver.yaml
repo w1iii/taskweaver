@@ -15,7 +15,7 @@ tasks:
     retries: 0
 
   - name: build
-    command: "python -m build"
+    command: "python3 -m build"
     dependencies:
       - lint
       - test

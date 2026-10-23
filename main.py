@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import typer
@@ -5,7 +6,7 @@ import typer
 from config import Config
 from dependencies import DependencyManager
 from parallel_runner import ParallelRunner
-from runner import TaskRunner, print_results
+from runner import print_results
 
 app = typer.Typer(
     no_args_is_help=False,
@@ -89,7 +90,6 @@ def _run_all(config_path: str) -> None:
     tasks = config.config["tasks"]
     max_concurrent = config.config.get("settings", {}).get("max_concurrent")
     runner = ParallelRunner(tasks, max_concurrent)
-    import asyncio
     results = asyncio.run(runner.run_all())
     print_results(results)
     failed = [r for r in results if not r.ok]
@@ -102,7 +102,6 @@ def _run_single(config_path: str, task_name: str) -> None:
     subset = _collect_with_deps(config.config["tasks"], task_name)
     max_concurrent = config.config.get("settings", {}).get("max_concurrent")
     runner = ParallelRunner(subset, max_concurrent)
-    import asyncio
     results = asyncio.run(runner.run_all())
     print_results(results)
     failed = [r for r in results if not r.ok]

@@ -1,10 +1,10 @@
 import asyncio
 import os
+import signal
 from collections import defaultdict
-from dataclasses import dataclass
 
 from dependencies import DependencyManager
-from runner import BLOCKED, FAILED, SKIPPED, SUCCESS, TaskResult
+from runner import BLOCKED, FAILED, SUCCESS, TaskResult
 
 
 def compute_depths(tasks: list[dict]) -> dict[str, int]:
@@ -165,6 +165,7 @@ class ParallelRunner:
                     command,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True,
                 )
             except Exception as e:
                 result.error = str(e)
@@ -194,7 +195,10 @@ class ParallelRunner:
                     timeout=timeout,
                 )
             except asyncio.TimeoutError:
-                proc.kill()
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except OSError:
+                    proc.kill()
                 await proc.wait()
                 result.error = f"Timed out after {timeout}s"
                 result.stdout = "\n".join(stdout_lines)
