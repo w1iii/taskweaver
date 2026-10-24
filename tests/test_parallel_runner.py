@@ -1,5 +1,8 @@
 import sys
 
+import pytest
+
+from dependencies import DependencyError
 from parallel_runner import ParallelRunner, compute_depths, run_workflow_parallel
 from runner import BLOCKED, FAILED, SUCCESS
 
@@ -114,6 +117,30 @@ class TestParallelExecution:
         names = [r.name for r in results]
         assert names.index("b") < names.index("d")
         assert names.index("c") < names.index("d")
+
+
+class TestCycleDetection:
+    def test_two_task_cycle_raises(self):
+        tasks = [
+            make_task("a", dependencies=["b"]),
+            make_task("b", dependencies=["a"]),
+        ]
+        with pytest.raises(DependencyError, match="Circular"):
+            run_workflow_parallel(tasks)
+
+    def test_longer_cycle_raises(self):
+        tasks = [
+            make_task("a", dependencies=["c"]),
+            make_task("b", dependencies=["a"]),
+            make_task("c", dependencies=["b"]),
+        ]
+        with pytest.raises(DependencyError, match="Circular"):
+            run_workflow_parallel(tasks)
+
+    def test_unknown_dependency_raises(self):
+        tasks = [make_task("a", dependencies=["missing"])]
+        with pytest.raises(DependencyError, match="unknown task"):
+            run_workflow_parallel(tasks)
 
 
 class TestRetries:

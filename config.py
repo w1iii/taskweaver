@@ -27,6 +27,10 @@ class Config:
             return False
         return isinstance(value, (int, float)) and value > 0
 
+    @staticmethod
+    def _is_positive_int(value):
+        return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
     def check_settings(self):
         settings = self.config.get("settings", {})
 
@@ -42,7 +46,9 @@ class Config:
             print(f"Invalid timeout: {settings['timeout']!r}")
             return False
 
-        if "max_concurrent" in settings and not self._is_positive(settings["max_concurrent"]):
+        if "max_concurrent" in settings and not self._is_positive_int(
+            settings["max_concurrent"]
+        ):
             print(f"Invalid max_concurrent: {settings['max_concurrent']!r}")
             return False
 
@@ -150,7 +156,7 @@ class Config:
                 print(f"Invalid timeout for task '{name}': {task['timeout']!r}")
                 return False
 
-            if "max_parallel" in task and not self._is_positive(task["max_parallel"]):
+            if "max_parallel" in task and not self._is_positive_int(task["max_parallel"]):
                 print(f"Invalid max_parallel for task '{name}': {task['max_parallel']!r}")
                 return False
 

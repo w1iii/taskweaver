@@ -6,7 +6,7 @@ import typer
 
 from cache import DEFAULT_CACHE_PATH, Cache
 from config import Config
-from dependencies import DependencyManager
+from dependencies import DependencyError, DependencyManager
 from parallel_runner import ParallelRunner
 from runner import print_results
 
@@ -107,14 +107,16 @@ def main_callback(
         _run_all(ctx.obj)
 
 
-def _run_all(context: AppContext) -> None:
-    config = _load_config(context.config)
-    tasks = config.config["tasks"]
-    max_concurrent = config.config.get("settings", {}).get("max_concurrent")
+def _run_tasks(config: Config, tasks: list[dict], context: AppContext) -> None:
+    settings = config.config.get("settings") or {}
+    max_concurrent = settings.get("max_concurrent")
     cache = _open_cache(config, context.no_cache)
     try:
         runner = ParallelRunner(tasks, max_concurrent, cache)
         results = asyncio.run(runner.run_all())
+    except DependencyError as e:
+        typer.echo(f"Dependency error: {e}", err=True)
+        raise typer.Exit(1)
     finally:
         if cache is not None:
             cache.close()
@@ -122,23 +124,17 @@ def _run_all(context: AppContext) -> None:
     failed = [r for r in results if not r.ok]
     typer.echo(f"\n{len(results) - len(failed)}/{len(results)} tasks succeeded")
     raise typer.Exit(1 if failed else 0)
+
+
+def _run_all(context: AppContext) -> None:
+    config = _load_config(context.config)
+    _run_tasks(config, config.config["tasks"], context)
 
 
 def _run_single(context: AppContext, task_name: str) -> None:
     config = _load_config(context.config)
     subset = _collect_with_deps(config.config["tasks"], task_name)
-    max_concurrent = config.config.get("settings", {}).get("max_concurrent")
-    cache = _open_cache(config, context.no_cache)
-    try:
-        runner = ParallelRunner(subset, max_concurrent, cache)
-        results = asyncio.run(runner.run_all())
-    finally:
-        if cache is not None:
-            cache.close()
-    print_results(results)
-    failed = [r for r in results if not r.ok]
-    typer.echo(f"\n{len(results) - len(failed)}/{len(results)} tasks succeeded")
-    raise typer.Exit(1 if failed else 0)
+    _run_tasks(config, subset, context)
 
 
 @app.command()
@@ -156,8 +152,13 @@ def run(
 
 @app.command()
 def validate(ctx: typer.Context):
-    """Validate configuration without running tasks."""
-    _load_config(ctx.obj.config)
+    """Validate configuration and dependencies without running tasks."""
+    cfg = _load_config(ctx.obj.config)
+    try:
+        DependencyManager(cfg.config["tasks"]).get_execution_order()
+    except DependencyError as e:
+        typer.echo(f"Dependency error: {e}", err=True)
+        raise typer.Exit(1)
     typer.echo("Configuration is valid")
 
 
@@ -169,7 +170,7 @@ def list_tasks(ctx: typer.Context):
 
     try:
         ordered = DependencyManager(tasks).get_execution_order()
-    except Exception as e:
+    except DependencyError as e:
         typer.echo(f"Dependency error: {e}", err=True)
         raise typer.Exit(1)
 

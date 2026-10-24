@@ -4,7 +4,7 @@ import signal
 from collections import defaultdict
 
 from cache import Cache, compute_fingerprint
-from dependencies import DependencyManager
+from dependencies import DependencyError, DependencyManager
 from runner import BLOCKED, FAILED, SKIPPED, SUCCESS, TaskResult
 
 
@@ -48,7 +48,8 @@ class ParallelRunner:
         self._print_lock = asyncio.Lock()
 
     async def run_all(self) -> list[TaskResult]:
-        DependencyManager(self.tasks).validate_dependencies()
+        # get_execution_order validates names and rejects cycles (Kahn's algorithm).
+        DependencyManager(self.tasks).get_execution_order()
 
         ready: asyncio.PriorityQueue = asyncio.PriorityQueue()
         pending = {
@@ -88,6 +89,9 @@ class ParallelRunner:
                 name = running.pop(t)
                 instances = t.result()
                 self._record(name, instances, pending, ready)
+
+        if len(self.task_status) != len(self.tasks):
+            raise DependencyError("Circular dependency detected between tasks.")
 
         return self.results
 

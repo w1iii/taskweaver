@@ -236,6 +236,21 @@ class TestSettingsValidation:
         )
         assert Config(path).check_config() is False
 
+    def test_float_max_concurrent_rejected(self, tmp_path):
+        path = write_cfg(
+            tmp_path,
+            """
+            project:
+              name: Test
+            settings:
+              max_concurrent: 2.5
+            tasks:
+              - name: a
+                command: "echo"
+            """,
+        )
+        assert Config(path).check_config() is False
+
     def test_settings_not_mapping(self, tmp_path):
         path = write_cfg(
             tmp_path,
@@ -352,6 +367,20 @@ class TestTaskFieldValidation:
               - name: a
                 command: "echo"
                 max_parallel: 0
+            """,
+        )
+        assert Config(path).check_config() is False
+
+    def test_float_max_parallel_rejected(self, tmp_path):
+        path = write_cfg(
+            tmp_path,
+            """
+            project:
+              name: Test
+            tasks:
+              - name: a
+                command: "echo"
+                max_parallel: 2.5
             """,
         )
         assert Config(path).check_config() is False
