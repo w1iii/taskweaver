@@ -39,10 +39,16 @@ settings:
 tasks:
   - name: lint
     command: "ruff check ."
+    inputs:
+      - "**/*.py"
+      - "pyproject.toml"
 
   - name: test
     command: "pytest"
     retries: 0
+    inputs:
+      - "**/*.py"
+      - "pyproject.toml"
 
   - name: build
     command: "python3 -m build"
@@ -50,6 +56,9 @@ tasks:
       - lint
       - test
     timeout: 600
+    inputs:
+      - "**/*.py"
+      - "pyproject.toml"
 """
 
 

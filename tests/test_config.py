@@ -385,6 +385,66 @@ class TestTaskFieldValidation:
         )
         assert Config(path).check_config() is False
 
+    def test_valid_inputs_accepted(self, tmp_path):
+        path = write_cfg(
+            tmp_path,
+            """
+            project:
+              name: Test
+            tasks:
+              - name: a
+                command: "echo"
+                inputs:
+                  - "src/**/*.py"
+                  - "pyproject.toml"
+            """,
+        )
+        assert Config(path).check_config() is True
+
+    def test_inputs_not_list_rejected(self, tmp_path):
+        path = write_cfg(
+            tmp_path,
+            """
+            project:
+              name: Test
+            tasks:
+              - name: a
+                command: "echo"
+                inputs: "*.py"
+            """,
+        )
+        assert Config(path).check_config() is False
+
+    def test_inputs_non_string_rejected(self, tmp_path):
+        path = write_cfg(
+            tmp_path,
+            """
+            project:
+              name: Test
+            tasks:
+              - name: a
+                command: "echo"
+                inputs:
+                  - 1
+            """,
+        )
+        assert Config(path).check_config() is False
+
+    def test_inputs_empty_pattern_rejected(self, tmp_path):
+        path = write_cfg(
+            tmp_path,
+            """
+            project:
+              name: Test
+            tasks:
+              - name: a
+                command: "echo"
+                inputs:
+                  - ""
+            """,
+        )
+        assert Config(path).check_config() is False
+
     def test_invalid_enabled(self, tmp_path):
         path = write_cfg(
             tmp_path,

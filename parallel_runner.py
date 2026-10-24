@@ -155,7 +155,7 @@ class ParallelRunner:
 
         fingerprint: str | None = None
         if self.cache is not None:
-            fingerprint = compute_fingerprint(task)
+            fingerprint = compute_fingerprint(task, self.tasks_by_name)
             cached = self.cache.get(fingerprint)
             if cached is not None:
                 return [cached]

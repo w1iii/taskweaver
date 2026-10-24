@@ -148,6 +148,16 @@ class Config:
                 print(f"Task '{name}' has an invalid command: {command!r}")
                 return False
 
+            if "inputs" in task:
+                inputs = task["inputs"]
+                if not isinstance(inputs, list):
+                    print(f"Invalid inputs for task '{name}': must be a list")
+                    return False
+                for pattern in inputs:
+                    if not isinstance(pattern, str) or not pattern.strip():
+                        print(f"Invalid input pattern for task '{name}': {pattern!r}")
+                        return False
+
             if "retries" in task and not self._is_count(task["retries"]):
                 print(f"Invalid retries for task '{name}': {task['retries']!r}")
                 return False

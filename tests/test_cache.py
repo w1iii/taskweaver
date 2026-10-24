@@ -57,6 +57,79 @@ class TestFingerprint:
             cache.CACHE_VERSION = old
 
 
+class TestInputFingerprint:
+    def test_input_content_change_changes_hash(self, tmp_path):
+        source = tmp_path / "a.txt"
+        source.write_text("one")
+        task = make_task(inputs=["*.txt"])
+
+        first = compute_fingerprint(task, base_dir=tmp_path)
+        source.write_text("two")
+
+        assert compute_fingerprint(task, base_dir=tmp_path) != first
+
+    def test_file_added_changes_hash(self, tmp_path):
+        (tmp_path / "a.txt").write_text("one")
+        task = make_task(inputs=["*.txt"])
+        first = compute_fingerprint(task, base_dir=tmp_path)
+
+        (tmp_path / "b.txt").write_text("two")
+
+        assert compute_fingerprint(task, base_dir=tmp_path) != first
+
+    def test_file_removed_changes_hash(self, tmp_path):
+        (tmp_path / "a.txt").write_text("one")
+        extra = tmp_path / "b.txt"
+        extra.write_text("two")
+        task = make_task(inputs=["*.txt"])
+        first = compute_fingerprint(task, base_dir=tmp_path)
+
+        extra.unlink()
+
+        assert compute_fingerprint(task, base_dir=tmp_path) != first
+
+    def test_no_match_is_stable(self, tmp_path):
+        task = make_task(inputs=["*.txt"])
+        assert compute_fingerprint(task, base_dir=tmp_path) == compute_fingerprint(
+            task, base_dir=tmp_path
+        )
+
+    def test_pattern_order_irrelevant(self, tmp_path):
+        (tmp_path / "a.txt").write_text("one")
+        (tmp_path / "b.md").write_text("two")
+        a = make_task(inputs=["*.txt", "*.md"])
+        b = make_task(inputs=["*.md", "*.txt"])
+        assert compute_fingerprint(a, base_dir=tmp_path) == compute_fingerprint(
+            b, base_dir=tmp_path
+        )
+
+    def test_recursive_glob(self, tmp_path):
+        nested = tmp_path / "src"
+        nested.mkdir()
+        source = nested / "a.txt"
+        source.write_text("one")
+        task = make_task(inputs=["**/*.txt"])
+        first = compute_fingerprint(task, base_dir=tmp_path)
+
+        source.write_text("two")
+
+        assert compute_fingerprint(task, base_dir=tmp_path) != first
+
+    def test_dependency_input_change_cascades(self, tmp_path):
+        source = tmp_path / "a.txt"
+        source.write_text("one")
+        tasks = [
+            make_task("a", inputs=["*.txt"]),
+            make_task("b", dependencies=["a"]),
+        ]
+        by_name = {t["name"]: t for t in tasks}
+        first = compute_fingerprint(tasks[1], by_name, base_dir=tmp_path)
+
+        source.write_text("two")
+
+        assert compute_fingerprint(tasks[1], by_name, base_dir=tmp_path) != first
+
+
 class TestCacheStoreGet:
     def test_miss_on_empty(self, tmp_path):
         with Cache(str(tmp_path / "c.sqlite3")) as cache:
@@ -146,6 +219,39 @@ class TestRunnerIntegration:
                 [make_task(command=f"{sys.executable} -c 'print(2)'")], cache
             )
             assert changed[0].status == SUCCESS
+
+    def test_input_change_invalidates_cache(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        source = tmp_path / "a.txt"
+        source.write_text("one")
+        task = make_task(inputs=["*.txt"])
+        with Cache(str(tmp_path / "c.sqlite3")) as cache:
+            assert self._run([task], cache)[0].status == SUCCESS
+            assert self._run([task], cache)[0].status == CACHED
+
+            source.write_text("two")
+
+            assert self._run([task], cache)[0].status == SUCCESS
+
+    def test_dependency_input_change_reruns_dependent(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        source = tmp_path / "a.txt"
+        source.write_text("one")
+        tasks = [
+            make_task("a", inputs=["*.txt"]),
+            make_task("b", dependencies=["a"]),
+        ]
+        with Cache(str(tmp_path / "c.sqlite3")) as cache:
+            self._run(tasks, cache)
+            second = {r.name: r for r in self._run(tasks, cache)}
+            assert second["a"].status == CACHED
+            assert second["b"].status == CACHED
+
+            source.write_text("two")
+
+            third = {r.name: r for r in self._run(tasks, cache)}
+            assert third["a"].status == SUCCESS
+            assert third["b"].status == SUCCESS
 
     def test_failure_not_cached_reruns(self, tmp_path):
         failing = make_task(command=f"{sys.executable} -c 'raise SystemExit(1)'")
