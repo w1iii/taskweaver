@@ -1,3 +1,5 @@
+import sys
+
 from typer.testing import CliRunner
 
 from main import app
@@ -103,3 +105,72 @@ def test_run_unknown_task_exits_1(tmp_path):
     result = runner.invoke(app, ["--config", str(path), "run", "nope"])
     assert result.exit_code == 1
     assert "Unknown task: nope" in result.output
+
+
+def test_history_records_execution_and_cache_hit(tmp_path):
+    cache_path = tmp_path / "cache.sqlite3"
+    path = write_cfg(
+        tmp_path,
+        f"""
+        project:
+          name: Test
+        settings:
+          cache_path: "{cache_path}"
+        tasks:
+          - name: a
+            command: "{sys.executable} -c 'print(1)'"
+        """,
+    )
+    assert runner.invoke(app, ["--config", str(path), "run"]).exit_code == 0
+    assert runner.invoke(app, ["--config", str(path), "run"]).exit_code == 0
+
+    result = runner.invoke(app, ["--config", str(path), "history"])
+
+    assert result.exit_code == 0
+    assert "success" in result.output
+    assert "cached" in result.output
+
+
+def test_history_records_failure(tmp_path):
+    cache_path = tmp_path / "cache.sqlite3"
+    path = write_cfg(
+        tmp_path,
+        f"""
+        project:
+          name: Test
+        settings:
+          cache_path: "{cache_path}"
+        tasks:
+          - name: a
+            command: "{sys.executable} -c 'raise SystemExit(1)'"
+        """,
+    )
+    assert runner.invoke(app, ["--config", str(path), "run"]).exit_code == 1
+
+    result = runner.invoke(app, ["--config", str(path), "history"])
+
+    assert result.exit_code == 0
+    assert "failed" in result.output
+
+
+def test_history_records_runs_with_no_cache_flag(tmp_path):
+    cache_path = tmp_path / "cache.sqlite3"
+    path = write_cfg(
+        tmp_path,
+        f"""
+        project:
+          name: Test
+        settings:
+          cache_path: "{cache_path}"
+        tasks:
+          - name: a
+            command: "{sys.executable} -c 'print(1)'"
+        """,
+    )
+    args = ["--config", str(path), "--no-cache", "run"]
+    assert runner.invoke(app, args).exit_code == 0
+
+    result = runner.invoke(app, ["--config", str(path), "history"])
+
+    assert result.exit_code == 0
+    assert "success" in result.output

@@ -73,10 +73,10 @@ def _load_config(path: str) -> Config:
     return config
 
 
-def _open_cache(config: Config, no_cache: bool) -> Cache | None:
-    """Return a Cache unless caching is disabled via flag or settings."""
+def _open_cache(config: Config) -> Cache | None:
+    """Return the execution store unless caching is disabled in settings."""
     settings = config.config.get("settings", {}) or {}
-    if no_cache or not settings.get("cache", True):
+    if not settings.get("cache", True):
         return None
     return Cache(settings.get("cache_path", DEFAULT_CACHE_PATH))
 
@@ -107,7 +107,9 @@ def main_callback(
         DEFAULT_CONFIG, "--config", "-c", help="Path to taskweaver.yaml"
     ),
     no_cache: bool = typer.Option(
-        False, "--no-cache", help="Ignore cached results and always re-run."
+        False,
+        "--no-cache",
+        help="Ignore cached results and always re-run (history is still recorded).",
     ),
 ):
     """TaskWeaver — YAML-driven task runner."""
@@ -119,9 +121,11 @@ def main_callback(
 def _run_tasks(config: Config, tasks: list[dict], context: AppContext) -> None:
     settings = config.config.get("settings") or {}
     max_concurrent = settings.get("max_concurrent")
-    cache = _open_cache(config, context.no_cache)
+    cache = _open_cache(config)
     try:
-        runner = ParallelRunner(tasks, max_concurrent, cache)
+        runner = ParallelRunner(
+            tasks, max_concurrent, cache, use_cache=not context.no_cache
+        )
         results = asyncio.run(runner.run_all())
     except DependencyError as e:
         typer.echo(f"Dependency error: {e}", err=True)
@@ -196,35 +200,37 @@ def list_tasks(ctx: typer.Context):
 def history(
     ctx: typer.Context,
     limit: int = typer.Option(20, "--limit", "-n", help="Number of entries to show"),
+    task: str = typer.Option(None, "--task", "-t", help="Filter by task name"),
 ):
-    """Show recent cached task executions."""
+    """Show recent executions: success, failure, blocked, cached, skipped."""
     cfg = _load_config(ctx.obj.config)
-    cache = _open_cache(cfg, no_cache=False)
+    cache = _open_cache(cfg)
     if cache is None:
-        typer.echo("Caching is disabled.")
+        typer.echo("Execution history is disabled (cache: false).")
         raise typer.Exit(1)
     try:
-        rows = cache.history(limit)
+        rows = cache.history(limit, task)
     finally:
         cache.close()
 
     if not rows:
-        typer.echo("No cached executions yet.")
+        typer.echo(f"No runs recorded for task: {task}" if task else "No runs recorded yet.")
         return
 
     name_width = max(len(r["task_name"]) for r in rows)
     for row in rows:
+        attempts = f"  tries={row['attempts']}" if row["attempts"] > 1 else ""
         typer.echo(
             f"  {row['task_name']:<{name_width}}  {row['status']:<8}  "
-            f"rc={row['returncode']}  {row['executed_at']}"
+            f"rc={row['returncode']}  {row['executed_at']}{attempts}"
         )
 
 
 @app.command(name="clear-cache")
 def clear_cache(ctx: typer.Context):
-    """Remove all cached task results."""
+    """Remove cached results. Execution history is kept."""
     cfg = _load_config(ctx.obj.config)
-    cache = _open_cache(cfg, no_cache=False)
+    cache = _open_cache(cfg)
     if cache is None:
         typer.echo("Caching is disabled.")
         raise typer.Exit(1)
@@ -232,7 +238,7 @@ def clear_cache(ctx: typer.Context):
         removed = cache.clear()
     finally:
         cache.close()
-    typer.echo(f"Cleared {removed} cached result(s).")
+    typer.echo(f"Cleared {removed} cached result(s). History kept.")
 
 
 @app.command()

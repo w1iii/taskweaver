@@ -58,5 +58,11 @@ generated or cache files and cause perpetual cache misses.
 
 Tasks with `max_parallel > 1` are never cached: every run executes all instances.
 
-Skip the cache with `--no-cache` (before the subcommand), or manage it with
-`taskweaver history` and `taskweaver clear-cache`.
+Skip cache lookups with `--no-cache` (before the subcommand). Runs are still
+recorded in history. `cache: false` in settings disables both.
+
+## History
+
+`taskweaver history` lists recent runs — success, failure, blocked, cached, and
+skipped — newest first. Filter with `--task NAME`, limit with `--limit N`.
+History is append-only; `taskweaver clear-cache` clears cached results but keeps it.

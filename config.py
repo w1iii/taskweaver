@@ -196,7 +196,6 @@ class Config:
         if not self.check_tasks():
             return False
 
-        print("Configuration is valid")
         return True
 
 

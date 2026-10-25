@@ -32,11 +32,13 @@ class ParallelRunner:
         tasks: list[dict],
         max_concurrent: int | None = None,
         cache: Cache | None = None,
+        use_cache: bool = True,
     ):
         self.tasks = tasks
         self.tasks_by_name = {t["name"]: t for t in tasks}
         self.max_concurrent = max_concurrent or os.cpu_count() or 4
         self.cache = cache
+        self.use_cache = use_cache
         self.depths = compute_depths(tasks)
         self.results: list[TaskResult] = []
         self.task_status: dict[str, str] = {}
@@ -106,6 +108,8 @@ class ParallelRunner:
         status = FAILED if any_failed else SUCCESS
         self.task_status[name] = status
         self.results.extend(instances)
+        for result in instances:
+            self._record_run(name, result)
 
         for dep_name in self.dependents[name]:
             if dep_name in self.task_status:
@@ -130,13 +134,13 @@ class ParallelRunner:
         if name in self.task_status:
             return
         self.task_status[name] = BLOCKED
-        self.results.append(
-            TaskResult(
-                name=name,
-                status=BLOCKED,
-                error=f"Blocked by failed dependencies: {', '.join(failed_deps)}",
-            )
+        blocked = TaskResult(
+            name=name,
+            status=BLOCKED,
+            error=f"Blocked by failed dependencies: {', '.join(failed_deps)}",
         )
+        self.results.append(blocked)
+        self._record_run(name, blocked)
         for child in self.dependents[name]:
             if child in self.task_status:
                 continue
@@ -144,6 +148,10 @@ class ParallelRunner:
             pending[child] -= 1
             if pending[child] == 0:
                 self._block(child, self.failed_deps[child], pending, ready)
+
+    def _record_run(self, name: str, result: TaskResult) -> None:
+        if self.cache is not None:
+            self.cache.record_run(self.tasks_by_name[name], result)
 
     async def _run_task(
         self, name: str, global_sem: asyncio.Semaphore
@@ -158,7 +166,7 @@ class ParallelRunner:
         # Multi-instance tasks run the same command N times on purpose (load or
         # stress probes), so caching would defeat them. Only singleton tasks cache.
         fingerprint: str | None = None
-        if self.cache is not None and max_parallel == 1:
+        if self.cache is not None and self.use_cache and max_parallel == 1:
             fingerprint = compute_fingerprint(task, self.tasks_by_name)
             cached = self.cache.get(fingerprint)
             if cached is not None:

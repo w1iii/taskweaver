@@ -161,7 +161,8 @@ class TestCacheStoreGet:
             cache.store(fp, task, TaskResult("a", SUCCESS, returncode=0, stdout="first"))
             cache.store(fp, task, TaskResult("a", SUCCESS, returncode=0, stdout="second"))
             assert cache.get(fp).stdout == "second"
-            assert len(cache.history()) == 1
+            # cache writes are not execution history
+            assert cache.history() == []
 
     def test_persistence_across_instances(self, tmp_path):
         path = str(tmp_path / "c.sqlite3")
@@ -174,33 +175,63 @@ class TestCacheStoreGet:
 
 
 class TestHistoryAndClear:
-    def test_history_records(self, tmp_path):
+    def test_history_records_success_and_failure(self, tmp_path):
         with Cache(str(tmp_path / "c.sqlite3")) as cache:
-            cache.store("fp1", make_task("a"), TaskResult("a", SUCCESS, returncode=0))
-            cache.store("fp2", make_task("b"), TaskResult("b", SUCCESS, returncode=0))
+            cache.record_run(make_task("a"), TaskResult("a", SUCCESS, returncode=0))
+            cache.record_run(
+                make_task("b", command="false"),
+                TaskResult("b", FAILED, returncode=1, error="bad"),
+            )
             rows = cache.history()
-            assert len(rows) == 2
-            assert {r["task_name"] for r in rows} == {"a", "b"}
+            assert [r["task_name"] for r in rows] == ["b", "a"]
+            assert rows[0]["status"] == FAILED
+            assert rows[0]["error"] == "bad"
+            assert rows[1]["status"] == SUCCESS
 
     def test_history_limit(self, tmp_path):
         with Cache(str(tmp_path / "c.sqlite3")) as cache:
             for i in range(5):
-                cache.store(f"fp{i}", make_task(f"t{i}"), TaskResult(f"t{i}", SUCCESS))
+                task = make_task(f"t{i}")
+                cache.record_run(task, TaskResult(f"t{i}", SUCCESS))
             assert len(cache.history(limit=2)) == 2
 
-    def test_clear(self, tmp_path):
+    def test_history_filter_by_task(self, tmp_path):
         with Cache(str(tmp_path / "c.sqlite3")) as cache:
-            cache.store("fp1", make_task("a"), TaskResult("a", SUCCESS))
+            for name in ["a", "b", "a"]:
+                cache.record_run(make_task(name), TaskResult(name, SUCCESS))
+            rows = cache.history(task_name="a")
+            assert len(rows) == 2
+            assert {r["task_name"] for r in rows} == {"a"}
+
+    def test_history_keeps_attempts_and_instance(self, tmp_path):
+        with Cache(str(tmp_path / "c.sqlite3")) as cache:
+            cache.record_run(
+                make_task("a"),
+                TaskResult("a", SUCCESS, attempts=2, returncode=0, instance=3),
+            )
+            row = cache.history()[0]
+            assert row["attempts"] == 2
+            assert row["instance"] == 3
+
+    def test_clear_keeps_history(self, tmp_path):
+        task = make_task("a")
+        fp = compute_fingerprint(task)
+        with Cache(str(tmp_path / "c.sqlite3")) as cache:
+            cache.store(fp, task, TaskResult("a", SUCCESS))
+            cache.record_run(task, TaskResult("a", SUCCESS))
+
             assert cache.clear() == 1
-            assert cache.history() == []
-            assert cache.get("fp1") is None
+            assert cache.get(fp) is None
+            assert len(cache.history()) == 1
 
 
 class TestRunnerIntegration:
-    def _run(self, tasks, cache):
+    def _run(self, tasks, cache, use_cache=True):
         import asyncio
 
-        return asyncio.run(ParallelRunner(tasks, cache=cache).run_all())
+        return asyncio.run(
+            ParallelRunner(tasks, cache=cache, use_cache=use_cache).run_all()
+        )
 
     def test_first_run_executes_then_second_run_cached(self, tmp_path):
         task = make_task()
@@ -211,6 +242,8 @@ class TestRunnerIntegration:
             second = self._run([task], cache)
             assert second[0].status == CACHED
             assert second[0].ok is True
+
+            assert [r["status"] for r in cache.history()] == [CACHED, SUCCESS]
 
     def test_command_change_invalidates_cache(self, tmp_path):
         with Cache(str(tmp_path / "c.sqlite3")) as cache:
@@ -262,7 +295,7 @@ class TestRunnerIntegration:
             assert [r.status for r in first] == [SUCCESS, SUCCESS]
             assert [r.status for r in second] == [SUCCESS, SUCCESS]
             assert sorted(r.instance for r in second) == [0, 1]
-            assert cache.history() == []
+            assert [r["status"] for r in cache.history()] == [SUCCESS] * 4
 
     def test_dependent_of_multi_instance_task_still_caches(self, tmp_path):
         tasks = [
@@ -285,6 +318,7 @@ class TestRunnerIntegration:
             assert first[0].status == FAILED
             second = self._run([failing], cache)
             assert second[0].status == FAILED
+            assert [r["status"] for r in cache.history()] == [FAILED, FAILED]
 
     def test_no_cache_always_executes(self, tmp_path):
         task = make_task()
@@ -292,6 +326,16 @@ class TestRunnerIntegration:
         second = self._run([task], None)
         assert first[0].status == SUCCESS
         assert second[0].status == SUCCESS
+
+    def test_use_cache_false_still_records_history(self, tmp_path):
+        task = make_task()
+        with Cache(str(tmp_path / "c.sqlite3")) as cache:
+            first = self._run([task], cache, use_cache=False)
+            second = self._run([task], cache, use_cache=False)
+
+            assert first[0].status == SUCCESS
+            assert second[0].status == SUCCESS
+            assert [r["status"] for r in cache.history()] == [SUCCESS, SUCCESS]
 
     def test_cached_dependency_unblocks_dependent(self, tmp_path):
         tasks = [
@@ -317,9 +361,11 @@ class TestRunnerIntegration:
             make_task("a", command=f"{sys.executable} -c 'raise SystemExit(1)'"),
             make_task("b", dependencies=["a"]),
         ]
+        by_name = {t["name"]: t for t in tasks}
         with Cache(str(tmp_path / "c.sqlite3")) as cache:
             results = self._run(tasks, cache)
-            by_name = {r.name: r for r in results}
-            assert by_name["b"].status == BLOCKED
+            by_result = {r.name: r for r in results}
+            assert by_result["b"].status == BLOCKED
             # blocked tasks should not appear in cache
-            assert cache.get(compute_fingerprint(tasks[1])) is None
+            assert cache.get(compute_fingerprint(tasks[1], by_name)) is None
+            assert [r["status"] for r in cache.history()] == [BLOCKED, FAILED]

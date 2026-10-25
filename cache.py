@@ -12,6 +12,10 @@ CACHE_VERSION = 1
 HASH_CHUNK_SIZE = 1024 * 1024
 
 
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def compute_fingerprint(
     task: dict,
     tasks_by_name: dict[str, dict] | None = None,
@@ -102,7 +106,7 @@ def _relative_key(path: Path, base_dir: Path) -> str:
 
 
 class Cache:
-    """SQLite-backed cache of successful task results."""
+    """SQLite-backed result cache plus append-only execution history."""
 
     def __init__(self, path: str | None = None):
         self.path = Path(path or DEFAULT_CACHE_PATH)
@@ -126,6 +130,26 @@ class Cache:
                 executed_at TEXT NOT NULL
             )
             """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runs (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_name   TEXT NOT NULL,
+                command     TEXT NOT NULL,
+                status      TEXT NOT NULL,
+                attempts    INTEGER NOT NULL DEFAULT 0,
+                returncode  INTEGER,
+                stdout      TEXT,
+                stderr      TEXT,
+                error       TEXT,
+                instance    INTEGER NOT NULL DEFAULT 0,
+                executed_at TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runs_task ON runs (task_name, id DESC)"
         )
         self._conn.commit()
 
@@ -170,20 +194,54 @@ class Cache:
                 result.stdout,
                 result.stderr,
                 result.error,
-                datetime.now(timezone.utc).isoformat(),
+                _timestamp(),
             ),
         )
         self._conn.commit()
 
-    def history(self, limit: int = 20) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT task_name, command, status, returncode, executed_at "
-            "FROM results ORDER BY executed_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+    def record_run(self, task: dict, result: TaskResult) -> None:
+        """Append one execution to history, regardless of status or cache use."""
+        self._conn.execute(
+            """
+            INSERT INTO runs
+                (task_name, command, status, attempts, returncode,
+                 stdout, stderr, error, instance, executed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task["name"],
+                task["command"],
+                result.status,
+                result.attempts,
+                result.returncode,
+                result.stdout,
+                result.stderr,
+                result.error,
+                result.instance,
+                _timestamp(),
+            ),
+        )
+        self._conn.commit()
+
+    def history(self, limit: int = 20, task_name: str | None = None) -> list[dict]:
+        """Return recent executions, newest first, optionally for one task."""
+        if task_name is None:
+            rows = self._conn.execute(
+                "SELECT task_name, command, status, attempts, returncode, error, "
+                "instance, executed_at FROM runs ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT task_name, command, status, attempts, returncode, error, "
+                "instance, executed_at FROM runs WHERE task_name = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (task_name, limit),
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def clear(self) -> int:
+        """Remove cached results. Execution history is kept."""
         cursor = self._conn.execute("DELETE FROM results")
         self._conn.commit()
         return cursor.rowcount
