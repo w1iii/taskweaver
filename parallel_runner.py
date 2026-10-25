@@ -153,14 +153,17 @@ class ParallelRunner:
         if not task.get("enabled", True):
             return [TaskResult(name=name, status=SKIPPED)]
 
+        max_parallel = task.get("max_parallel", 1)
+
+        # Multi-instance tasks run the same command N times on purpose (load or
+        # stress probes), so caching would defeat them. Only singleton tasks cache.
         fingerprint: str | None = None
-        if self.cache is not None:
+        if self.cache is not None and max_parallel == 1:
             fingerprint = compute_fingerprint(task, self.tasks_by_name)
             cached = self.cache.get(fingerprint)
             if cached is not None:
                 return [cached]
 
-        max_parallel = task.get("max_parallel", 1)
         per_task_sem = asyncio.Semaphore(max_parallel)
 
         async def run_instance(instance_id: int) -> TaskResult:

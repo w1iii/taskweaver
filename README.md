@@ -56,5 +56,7 @@ only config changes invalidate a cached result — add globs to make source edit
 trigger reruns. Keep globs scoped to source files; broad patterns can include
 generated or cache files and cause perpetual cache misses.
 
+Tasks with `max_parallel > 1` are never cached: every run executes all instances.
+
 Skip the cache with `--no-cache` (before the subcommand), or manage it with
 `taskweaver history` and `taskweaver clear-cache`.

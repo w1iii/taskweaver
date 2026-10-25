@@ -253,6 +253,31 @@ class TestRunnerIntegration:
             assert third["a"].status == SUCCESS
             assert third["b"].status == SUCCESS
 
+    def test_multi_instance_task_is_not_cached(self, tmp_path):
+        task = make_task(max_parallel=2)
+        with Cache(str(tmp_path / "c.sqlite3")) as cache:
+            first = self._run([task], cache)
+            second = self._run([task], cache)
+
+            assert [r.status for r in first] == [SUCCESS, SUCCESS]
+            assert [r.status for r in second] == [SUCCESS, SUCCESS]
+            assert sorted(r.instance for r in second) == [0, 1]
+            assert cache.history() == []
+
+    def test_dependent_of_multi_instance_task_still_caches(self, tmp_path):
+        tasks = [
+            make_task("a", max_parallel=2),
+            make_task("b", dependencies=["a"]),
+        ]
+        with Cache(str(tmp_path / "c.sqlite3")) as cache:
+            self._run(tasks, cache)
+            second = self._run(tasks, cache)
+
+            a_results = [r for r in second if r.name == "a"]
+            b_results = [r for r in second if r.name == "b"]
+            assert [r.status for r in a_results] == [SUCCESS, SUCCESS]
+            assert [r.status for r in b_results] == [CACHED]
+
     def test_failure_not_cached_reruns(self, tmp_path):
         failing = make_task(command=f"{sys.executable} -c 'raise SystemExit(1)'")
         with Cache(str(tmp_path / "c.sqlite3")) as cache:
